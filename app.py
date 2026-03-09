@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import os
-import json  # 用来把 AI 输出的文字精准转换成字典
+import json
+import altair as alt  # 新增：用来画更精细的图表，限制负数坐标轴
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -19,7 +20,7 @@ client = OpenAI(
 # 准备一个“记事本”，用来长期保存所有学生的成绩
 # ==========================================
 if "student_records" not in st.session_state:
-    st.session_state.student_records = [] # 如果还没建记事本，就建一个空列表
+    st.session_state.student_records = []
 
 # ==========================================
 # 题库与提示词定义
@@ -58,7 +59,7 @@ prompt_template = """
 # 网页界面搭建
 # ==========================================
 st.title("📝 王安石《梅花》自动批改系统")
-st.markdown("> 墙角数枝梅，凌寒独自开。遥知不是雪，为有暗香来。")
+# （已将原文中的古诗 markdown 引用块删除）
 st.divider()
 
 st.subheader("👨‍🎓 学生答题区")
@@ -69,7 +70,7 @@ current_q_text = questions_db[selected_q_id]["question"]
 current_standard_answer = questions_db[selected_q_id]["answer"]
 
 # ==========================================
-# 新增：题目的精装修展示区
+# 题目的精装修展示区
 # ==========================================
 st.markdown(f"### 📌 {selected_q_id} 题目内容：")
 st.success(current_q_text)
@@ -127,18 +128,22 @@ if st.button("🚀 提交并批改"):
 st.divider()
 st.subheader("📊 班级成绩汇总表")
 
-# 检查“记事本”里有没有数据
 if len(st.session_state.student_records) > 0:
-    # 1. 把记事本里的所有数据交给 pandas 转换成酷炫的表格
     df = pd.DataFrame(st.session_state.student_records)
-    
-    # 2. 在网页上展示这张表格
     st.dataframe(df, use_container_width=True)
     
-    # 3. 简单的自动统计分析
     st.write("📈 **班级错误类型分布：**")
-    error_counts = df['错误类型'].value_counts() 
-    st.bar_chart(error_counts) 
+    
+    # 核心修改：使用 altair 画图，强制 Y 轴从 0 开始，且只显示整数
+    error_counts = df['错误类型'].value_counts().reset_index()
+    error_counts.columns = ['错误类型', '人数']
+    
+    chart = alt.Chart(error_counts).mark_bar().encode(
+        x=alt.X('错误类型', title='', axis=alt.Axis(labelAngle=0)), # 名字横着显示，不倾斜
+        y=alt.Y('人数', title='人数', scale=alt.Scale(domainMin=0), axis=alt.Axis(tickMinStep=1)) # 最小值为0，步长为1
+    ).properties(height=300)
+    
+    st.altair_chart(chart, use_container_width=True)
     
 else:
     st.info("目前还没有学生提交答案哦，快去上面模拟几个学生测试一下吧！")
