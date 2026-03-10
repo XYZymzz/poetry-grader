@@ -146,4 +146,4 @@ if len(st.session_state.student_records) > 0:
     st.altair_chart(chart, use_container_width=True)
     
 else:
-    st.info("目前还没有学生提交答案哦，快去上面模拟几个学生测试一下吧！")
+    st.info("目前还没有学生提交答案哦！")
