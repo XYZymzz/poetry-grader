@@ -1,3 +1,4 @@
+import time
 import streamlit as st
 import pandas as pd
 import os
@@ -169,6 +170,20 @@ elif role == "👩‍🏫 教师端":
             ).properties(height=300)
             st.altair_chart(chart, use_container_width=True)
             
+            # ==========================================
+            # 新增：清空数据按钮（缩进严格对齐在 if len(df) > 0 内部）
+            # ==========================================
+            st.divider()
+            
+            if st.button("🗑️ 清空学生作答统计表", type="primary", use_container_width=True):
+                # 严谨的异常处理：先确认文件是否存在再删除
+                if os.path.exists(DATA_FILE):
+                    os.remove(DATA_FILE)
+                
+                st.success("✅ 数据已成功清空！界面即将刷新...")
+                time.sleep(1)  # 稍微停顿1秒，让提示信息展示
+                st.rerun()     # 强制刷新前端页面
+                
         else:
             st.info("目前还没有学生交卷哦，稍后再来查看吧！")
     elif teacher_pwd != "":
