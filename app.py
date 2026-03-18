@@ -81,7 +81,7 @@ role = st.sidebar.radio("请选择登录身份：", ["👨‍🎓 学生端", "�
 # ==========================================
 
 if role == "👨‍🎓 学生端":
-    st.title("📝 语文自动批改系统 (学生端)")
+    st.title("📝 王安石《梅花》自动批改系统")
     st.divider()
 
     selected_q_id = st.selectbox("请选择你要测试的题目：", list(questions_db.keys()))
