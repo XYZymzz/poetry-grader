@@ -94,7 +94,7 @@ if role == "👨‍🎓 学生端":
     st.caption("👇 请仔细阅读上方题目，并在下方输入你的答案")
 
     student_name = st.text_input("请输入学生姓名：", placeholder="例如：张三")
-    student_answer = st.text_input("请输入你的答案：", placeholder="输入诗句...")
+    student_answer = st.text_input("请输入你的答案：", placeholder="输入诗句...", key=f"answer_{selected_q_id}")
 
     if st.button("🚀 提交并获取批改"):
         if student_answer.strip() == "" or student_name.strip() == "":
