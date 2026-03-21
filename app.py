@@ -1,3 +1,4 @@
+import base64
 import time
 import streamlit as st
 import pandas as pd
@@ -34,6 +35,35 @@ def save_record(new_record):
     new_df = pd.DataFrame([new_record])
     df = pd.concat([df, new_df], ignore_index=True)
     df.to_csv(DATA_FILE, index=False)
+
+# ==========================================
+# 新增：网页背景渲染引擎
+# ==========================================
+def set_background(image_file):
+    """
+    严谨的背景渲染函数：读取本地图片并注入为全局 CSS 背景
+    """
+    # 严谨的异常处理：检查图片文件是否存在，防止程序因找不到文件而崩溃
+    if os.path.exists(image_file):
+        with open(image_file, "rb") as f:
+            encoded_string = base64.b64encode(f.read()).decode()
+        
+        # 构建 CSS 样式表
+        css = f"""
+        <style>
+        .stApp {{
+            background-image: url("data:image/jpeg;base64,{encoded_string}");
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }}
+        </style>
+        """
+        # 通过 st.markdown 强行允许 HTML 注入
+        st.markdown(css, unsafe_allow_html=True)
+
+# 调用函数渲染背景（传入你上传的图片名称）
+set_background("background.jpg")
 
 # ==========================================
 # 题库定义
