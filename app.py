@@ -285,8 +285,13 @@ if role == "👨‍🎓 学生端":
     # ---------------- 状态分离 B：错题巩固模式 ----------------
     else:
         st.error("❌ 哎呀，你刚才的作答有误，系统已为你开启【错题巩固模式】！")
+
+        # ==============================================
+        # 新增：保留显示原题内容，维持完整的教学上下文
+        # ==============================================
+        st.markdown(f"### 📌 原题内容：")
+        st.success(current_q_text)
         
-        # UI 重构：将姓名和学号提升至“背景上下文”区域，与原题作答并排或上下展示
         col_info1, col_info2 = st.columns(2)
         with col_info1:
             st.text_input("姓名：", value=st.session_state.temp_name, disabled=True)
@@ -301,7 +306,6 @@ if role == "👨‍🎓 学生端":
         st.info(st.session_state.follow_up_q)
 
         if not st.session_state.fu_completed:
-            # 现在的表单里面变得极其纯粹，只有一道答题框
             with st.form(key="follow_up_form"):
                 fu_answer = st.text_input("请输入巩固题的答案：")
                 fu_submitted = st.form_submit_button("🚀 提交巩固作答")
@@ -323,7 +327,6 @@ if role == "👨‍🎓 学生端":
                             )
                             fu_ai_result = json.loads(response.choices[0].message.content)
                             
-                            # 虽然表单里没有姓名学号了，但我们可以直接从 session_state 里读取，保证数据写入绝对安全
                             fu_record = {
                                 "学号": st.session_state.temp_id,
                                 "学生姓名": st.session_state.temp_name,
