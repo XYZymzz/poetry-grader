@@ -18,20 +18,45 @@ client = OpenAI(
 )
 
 # ==========================================
+# 核心升级：网页全局背景图注入 (CSS Injection)
+# ==========================================
+def set_background(image_url):
+    """
+    严谨的前端样式注入：通过覆写 .stApp 类的底层 CSS 来实现全屏背景覆盖。
+    """
+    page_bg_img = f"""
+    <style>
+    .stApp {{
+        background-image: url("{image_url}");
+        background-size: cover;
+        background-position: center;
+        background-attachment: fixed;
+        /* 添加一层半透明的白色遮罩，防止背景图过亮导致文字看不清 */
+        background-color: rgba(255,255,255,0.6);
+        background-blend-mode: overlay;
+    }}
+    </style>
+    """
+    st.markdown(page_bg_img, unsafe_allow_html=True)
+
+# 调用函数设置背景图（这里使用了一张唯美的水墨淡雅背景，你可以把引号里的链接换成你想要的任何图片地址）
+set_background("https://images.unsplash.com/photo-1614850523459-c2f4c699c52e?q=80&w=2070&auto=format&fit=crop")
+
+# ==========================================
 # 高阶应用：初始化全局状态机 (Session State)
 # ==========================================
 if "follow_up_active" not in st.session_state:
-    st.session_state.follow_up_active = False  # 是否处于错题巩固模式
+    st.session_state.follow_up_active = False  
 if "last_q_id" not in st.session_state:
-    st.session_state.last_q_id = None          # 记录上一道题，用于换题时重置状态
+    st.session_state.last_q_id = None          
 if "temp_name" not in st.session_state:
-    st.session_state.temp_name = ""            # 暂存姓名
+    st.session_state.temp_name = ""            
 if "temp_id" not in st.session_state:
-    st.session_state.temp_id = ""              # 暂存学号
+    st.session_state.temp_id = ""              
 if "follow_up_q" not in st.session_state:
-    st.session_state.follow_up_q = ""          # 暂存 AI 生成的新题目
+    st.session_state.follow_up_q = ""          
 if "wrong_feedback" not in st.session_state:
-    st.session_state.wrong_feedback = ""       # 暂存原题的错误反馈
+    st.session_state.wrong_feedback = ""       
 
 # ==========================================
 # 数据持久化
@@ -87,7 +112,7 @@ questions_db = {
 }
 
 # ==========================================
-# 提示词矩阵（大幅强化了自适应出题逻辑）
+# 提示词矩阵（自适应出题逻辑）
 # ==========================================
 prompt_fill = """
 你是一个严谨且懂得启发学生的语文老师。你的任务是批改学生关于王维《使至塞上》的理解性默写题。
@@ -100,7 +125,7 @@ prompt_fill = """
 2. 如果学生填对了句子，但有错别字，判定为 typo，error_type 为 "错别字"。你需要指出错字、给出正确字。
 3. 如果学生句子完全填错，判定为 wrong，error_type 为 "诗句填错"。你需要给出标准答案，并基于该答案重新设计一道全新的填空测试题（例如改变提问的角度），放在 follow_up_q 字段中。
 
-你的 JSON 输出格式必须严格如下（注意 follow_up_q 只有在 wrong 时才需要有内容，否则为空字符串）：
+你的 JSON 输出格式必须严格如下：
 {{
   "status": "correct | typo | wrong",
   "feedback": "给学生的反馈话语",
@@ -206,14 +231,14 @@ if role == "👨‍🎓 学生端":
                         }
                         save_record(new_record)
 
-                        # 核心状态机触发器：如果填空题完全错误，拦截界面并进入跟进模式
+                        # 核心状态机触发器
                         if current_q_type == "fill" and ai_result_dict.get("status") == "wrong":
                             st.session_state.follow_up_active = True
                             st.session_state.wrong_feedback = ai_result_dict.get("feedback")
                             st.session_state.follow_up_q = ai_result_dict.get("follow_up_q", f"请再次默写这句诗：{current_standard_answer}")
                             st.session_state.temp_name = student_name
                             st.session_state.temp_id = student_id
-                            st.rerun()  # 阻断下方代码，强制刷新页面以加载后续模式
+                            st.rerun()  
                         else:
                             st.success(f"批改完成！成绩已成功上传至教师端。")
                             st.write("✨ **AI 老师给你的专属反馈：**", ai_result_dict.get("feedback"))
@@ -235,7 +260,6 @@ if role == "👨‍🎓 学生端":
         with st.form(key="follow_up_form"):
             col1, col2 = st.columns(2)
             with col1:
-                # 自动继承刚才的名字，免除重复填写
                 student_name = st.text_input("请输入姓名：", value=st.session_state.temp_name, key="fu_name")
             with col2:
                 student_id = st.text_input("请输入学号（8位纯数字）：", value=st.session_state.temp_id, key="fu_id")
@@ -247,7 +271,6 @@ if role == "👨‍🎓 学生端":
             if fu_answer.strip() == "":
                 st.warning("巩固题答案不能为空！")
             else:
-                # 使用巩固题进行二次校验，标准答案仍然是这句诗
                 final_prompt = prompt_fill.format(q=st.session_state.follow_up_q, a=current_standard_answer, s=fu_answer)
                 
                 with st.spinner("AI 老师正在批阅巩固题..."):
@@ -260,7 +283,6 @@ if role == "👨‍🎓 学生端":
                         )
                         fu_ai_result = json.loads(response.choices[0].message.content)
                         
-                        # 记录巩固题库数据，并在题目名称后打上专属 Tag
                         fu_record = {
                             "学号": student_id,
                             "学生姓名": student_name,
@@ -273,9 +295,8 @@ if role == "👨‍🎓 学生端":
                         save_record(fu_record)
                         
                         st.success("✅ 巩固题批改完成！成绩已录入账本。系统即将返回原题模式...")
-                        time.sleep(2) # 缓冲2秒供学生查看结果
+                        time.sleep(2) 
                         
-                        # 闭环销毁状态：退出巩固模式
                         st.session_state.follow_up_active = False
                         st.rerun()
                         
