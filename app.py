@@ -1,4 +1,3 @@
-import base64
 import time
 import streamlit as st
 import pandas as pd
@@ -19,7 +18,23 @@ client = OpenAI(
 )
 
 # ==========================================
-# 核心升级 1：定义公共账本（增加“学号”字段）
+# 高阶应用：初始化全局状态机 (Session State)
+# ==========================================
+if "follow_up_active" not in st.session_state:
+    st.session_state.follow_up_active = False  # 是否处于错题巩固模式
+if "last_q_id" not in st.session_state:
+    st.session_state.last_q_id = None          # 记录上一道题，用于换题时重置状态
+if "temp_name" not in st.session_state:
+    st.session_state.temp_name = ""            # 暂存姓名
+if "temp_id" not in st.session_state:
+    st.session_state.temp_id = ""              # 暂存学号
+if "follow_up_q" not in st.session_state:
+    st.session_state.follow_up_q = ""          # 暂存 AI 生成的新题目
+if "wrong_feedback" not in st.session_state:
+    st.session_state.wrong_feedback = ""       # 暂存原题的错误反馈
+
+# ==========================================
+# 数据持久化
 # ==========================================
 DATA_FILE = "class_records.csv"
 
@@ -27,7 +42,6 @@ def load_records():
     if os.path.exists(DATA_FILE):
         return pd.read_csv(DATA_FILE)
     else:
-        # 表头新增了“学号”
         return pd.DataFrame(columns=["学号", "学生姓名", "题目", "学生作答", "判定状态", "错误类型", "AI 详细反馈"])
 
 def save_record(new_record):
@@ -35,35 +49,6 @@ def save_record(new_record):
     new_df = pd.DataFrame([new_record])
     df = pd.concat([df, new_df], ignore_index=True)
     df.to_csv(DATA_FILE, index=False)
-
-# ==========================================
-# 新增：网页背景渲染引擎
-# ==========================================
-def set_background(image_file):
-    """
-    严谨的背景渲染函数：读取本地图片并注入为全局 CSS 背景
-    """
-    # 严谨的异常处理：检查图片文件是否存在，防止程序因找不到文件而崩溃
-    if os.path.exists(image_file):
-        with open(image_file, "rb") as f:
-            encoded_string = base64.b64encode(f.read()).decode()
-        
-        # 构建 CSS 样式表
-        css = f"""
-        <style>
-        .stApp {{
-            background-image: url("data:image/jpeg;base64,{encoded_string}");
-            background-size: cover;
-            background-position: center;
-            background-attachment: fixed;
-        }}
-        </style>
-        """
-        # 通过 st.markdown 强行允许 HTML 注入
-        st.markdown(css, unsafe_allow_html=True)
-
-# 调用函数渲染背景（传入你上传的图片名称）
-set_background("background.jpg")
 
 # ==========================================
 # 题库定义
@@ -102,10 +87,10 @@ questions_db = {
 }
 
 # ==========================================
-# 两套 AI 提示词
+# 提示词矩阵（大幅强化了自适应出题逻辑）
 # ==========================================
 prompt_fill = """
-你是一个严谨的语文老师。你的任务是批改学生关于王维《使至塞上》的理解性默写题。
+你是一个严谨且懂得启发学生的语文老师。你的任务是批改学生关于王维《使至塞上》的理解性默写题。
 【题目】：{q}
 【标准答案】：{a}
 【学生作答】：{s}
@@ -113,13 +98,14 @@ prompt_fill = """
 请按以下规则批改，并严格只输出 JSON 格式的数据：
 1. 如果学生作答与标准答案完全一致，判定为 correct，error_type 为 "无错"。
 2. 如果学生填对了句子，但有错别字，判定为 typo，error_type 为 "错别字"。你需要指出错字、给出正确字。
-3. 如果学生句子完全填错，判定为 wrong，error_type 为 "诗句填错"。你需要给出标准答案。
+3. 如果学生句子完全填错，判定为 wrong，error_type 为 "诗句填错"。你需要给出标准答案，并基于该答案重新设计一道全新的填空测试题（例如改变提问的角度），放在 follow_up_q 字段中。
 
-你的 JSON 输出格式必须严格如下：
+你的 JSON 输出格式必须严格如下（注意 follow_up_q 只有在 wrong 时才需要有内容，否则为空字符串）：
 {{
   "status": "correct | typo | wrong",
   "feedback": "给学生的反馈话语",
-  "error_type": "无错 | 错别字 | 诗句填错"
+  "error_type": "无错 | 错别字 | 诗句填错",
+  "follow_up_q": "如果是 wrong，这里填入新设计的测试题，否则为空字符串"
 }}
 """
 
@@ -160,76 +146,141 @@ if role == "👨‍🎓 学生端":
     current_q_text = current_q_data["question"]
     current_standard_answer = current_q_data["answer"]
 
-    st.markdown(f"### 📌 题目内容：")
-    st.success(current_q_text)
-    
-    if current_q_type == "essay":
-        st.caption("👇 这是一道主观题，请在下方尽情输入你的分析与见解")
-    else:
-        st.caption("👇 请仔细阅读上方提示，并在下方输入正确的诗句")
+    # 监听用户切换题目动作，强制清除残留的错题状态
+    if st.session_state.last_q_id != selected_q_id:
+        st.session_state.last_q_id = selected_q_id
+        st.session_state.follow_up_active = False
 
-    # 核心改动 1：去掉 clear_on_submit=True，并把表单的 key 变成写死的固定字符串
-    with st.form(key="student_submit_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            # 核心改动 2：给姓名和学号也加上固定的 key，强化状态记忆
-            student_name = st.text_input("请输入姓名：", key="student_name_input")
-        with col2:
-            student_id = st.text_input("请输入学号（8位纯数字）：", key="student_id_input")
+    # ---------------- 状态分离 A：正常作答模式 ----------------
+    if not st.session_state.follow_up_active:
+        st.markdown(f"### 📌 题目内容：")
+        st.success(current_q_text)
         
-        # 核心改动 3：答案框的 key 依然保持动态！这样换题时只有它会变成全新的空框
         if current_q_type == "essay":
-            student_answer = st.text_area("请输入你的答案：", key=f"answer_{selected_q_id}", height=150)
+            st.caption("👇 这是一道主观题，请在下方尽情输入你的分析与见解")
         else:
-            student_answer = st.text_input("请输入你的答案：", key=f"answer_{selected_q_id}")
-        
-        submitted = st.form_submit_button("🚀 提交并获取批改")
+            st.caption("👇 请仔细阅读上方提示，并在下方输入正确的诗句")
 
-    if submitted:
-        # 严谨的格式校验逻辑
-        if student_answer.strip() == "" or student_name.strip() == "" or student_id.strip() == "":
-            st.warning("⚠️ 学号、姓名和答案都不能为空哦！请重新填写。")
-        elif not student_id.isdigit() or len(student_id) != 8:
-            st.warning("🚨 学号格式错误！必须是刚好 8 位的纯数字（例如：20260101）。")
-        else:
-            active_prompt = prompt_essay if current_q_type == "essay" else prompt_fill
-            final_prompt = active_prompt.format(
-                q=current_q_text, 
-                a=current_standard_answer, 
-                s=student_answer
-            )
+        with st.form(key="student_submit_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                student_name = st.text_input("请输入姓名：", key="main_name_input")
+            with col2:
+                student_id = st.text_input("请输入学号（8位纯数字）：", key="main_id_input")
             
-            with st.spinner("AI 老师正在飞速批阅中，请稍候..."):
-                try:
-                    response = client.chat.completions.create(
-                        model="deepseek-chat", 
-                        messages=[{"role": "user", "content": final_prompt}],
-                        response_format={"type": "json_object"}, 
-                        temperature=0.1 
-                    )
-                    
-                    ai_result_dict = json.loads(response.choices[0].message.content)
-                    
-                    st.success(f"批改完成！成绩已成功上传至教师端。")
-                    st.write("✨ **AI 老师给你的专属反馈：**", ai_result_dict.get("feedback"))
-                    
-                    if current_q_type == "essay":
-                        st.info(f"📖 **标准答案参考：**\n\n{current_standard_answer}")
-                    
-                    # 记录中增加学号字段
-                    new_record = {
-                        "学号": student_id,
-                        "学生姓名": student_name,
-                        "题目": selected_q_id,
-                        "学生作答": student_answer,
-                        "判定状态": ai_result_dict.get("status"),
-                        "错误类型": ai_result_dict.get("error_type"),
-                        "AI 详细反馈": ai_result_dict.get("feedback")
-                    }
-                    save_record(new_record)
-                    
-                except Exception as e:
-                    st.error(f"哎呀，网络出了点小差错。错误信息：{e}")
+            if current_q_type == "essay":
+                student_answer = st.text_area("请输入你的答案：", key=f"answer_{selected_q_id}", height=150)
+            else:
+                student_answer = st.text_input("请输入你的答案：", key=f"answer_{selected_q_id}")
+            
+            submitted = st.form_submit_button("🚀 提交并获取批改")
+
+        if submitted:
+            if student_answer.strip() == "" or student_name.strip() == "" or student_id.strip() == "":
+                st.warning("⚠️ 学号、姓名和答案都不能为空哦！请重新填写。")
+            elif not student_id.isdigit() or len(student_id) != 8:
+                st.warning("🚨 学号格式错误！必须是刚好 8 位的纯数字。")
+            else:
+                active_prompt = prompt_essay if current_q_type == "essay" else prompt_fill
+                final_prompt = active_prompt.format(q=current_q_text, a=current_standard_answer, s=student_answer)
+                
+                with st.spinner("AI 老师正在飞速批阅中，请稍候..."):
+                    try:
+                        response = client.chat.completions.create(
+                            model="deepseek-chat", 
+                            messages=[{"role": "user", "content": final_prompt}],
+                            response_format={"type": "json_object"}, 
+                            temperature=0.1 
+                        )
+                        ai_result_dict = json.loads(response.choices[0].message.content)
+                        
+                        # 先将原题记录入库
+                        new_record = {
+                            "学号": student_id,
+                            "学生姓名": student_name,
+                            "题目": selected_q_id,
+                            "学生作答": student_answer,
+                            "判定状态": ai_result_dict.get("status"),
+                            "错误类型": ai_result_dict.get("error_type"),
+                            "AI 详细反馈": ai_result_dict.get("feedback")
+                        }
+                        save_record(new_record)
+
+                        # 核心状态机触发器：如果填空题完全错误，拦截界面并进入跟进模式
+                        if current_q_type == "fill" and ai_result_dict.get("status") == "wrong":
+                            st.session_state.follow_up_active = True
+                            st.session_state.wrong_feedback = ai_result_dict.get("feedback")
+                            st.session_state.follow_up_q = ai_result_dict.get("follow_up_q", f"请再次默写这句诗：{current_standard_answer}")
+                            st.session_state.temp_name = student_name
+                            st.session_state.temp_id = student_id
+                            st.rerun()  # 阻断下方代码，强制刷新页面以加载后续模式
+                        else:
+                            st.success(f"批改完成！成绩已成功上传至教师端。")
+                            st.write("✨ **AI 老师给你的专属反馈：**", ai_result_dict.get("feedback"))
+                            if current_q_type == "essay":
+                                st.info(f"📖 **标准答案参考：**\n\n{current_standard_answer}")
+                        
+                    except Exception as e:
+                        st.error(f"网络异常：{e}")
+
+    # ---------------- 状态分离 B：错题巩固模式 ----------------
+    else:
+        st.error("❌ 哎呀，你刚才的作答有误，系统已为你开启【错题巩固模式】！")
+        st.write("✨ **AI 老师的诊断：**", st.session_state.wrong_feedback)
+        
+        st.divider()
+        st.markdown(f"### 🎯 巩固题靶向训练：")
+        st.info(st.session_state.follow_up_q)
+
+        with st.form(key="follow_up_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                # 自动继承刚才的名字，免除重复填写
+                student_name = st.text_input("请输入姓名：", value=st.session_state.temp_name, key="fu_name")
+            with col2:
+                student_id = st.text_input("请输入学号（8位纯数字）：", value=st.session_state.temp_id, key="fu_id")
+            
+            fu_answer = st.text_input("请输入巩固题的答案：", key="fu_ans")
+            fu_submitted = st.form_submit_button("🚀 提交巩固作答")
+
+        if fu_submitted:
+            if fu_answer.strip() == "":
+                st.warning("巩固题答案不能为空！")
+            else:
+                # 使用巩固题进行二次校验，标准答案仍然是这句诗
+                final_prompt = prompt_fill.format(q=st.session_state.follow_up_q, a=current_standard_answer, s=fu_answer)
+                
+                with st.spinner("AI 老师正在批阅巩固题..."):
+                    try:
+                        response = client.chat.completions.create(
+                            model="deepseek-chat", 
+                            messages=[{"role": "user", "content": final_prompt}],
+                            response_format={"type": "json_object"}, 
+                            temperature=0.1 
+                        )
+                        fu_ai_result = json.loads(response.choices[0].message.content)
+                        
+                        # 记录巩固题库数据，并在题目名称后打上专属 Tag
+                        fu_record = {
+                            "学号": student_id,
+                            "学生姓名": student_name,
+                            "题目": selected_q_id + " (二次巩固)",
+                            "学生作答": fu_answer,
+                            "判定状态": fu_ai_result.get("status"),
+                            "错误类型": fu_ai_result.get("error_type"),
+                            "AI 详细反馈": fu_ai_result.get("feedback")
+                        }
+                        save_record(fu_record)
+                        
+                        st.success("✅ 巩固题批改完成！成绩已录入账本。系统即将返回原题模式...")
+                        time.sleep(2) # 缓冲2秒供学生查看结果
+                        
+                        # 闭环销毁状态：退出巩固模式
+                        st.session_state.follow_up_active = False
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"网络异常：{e}")
 
 elif role == "👩‍🏫 教师端":
     st.title("📊 班级学情汇总大屏 (教师端)")
@@ -244,11 +295,10 @@ elif role == "👩‍🏫 教师端":
             df_fill = df[df['错误类型'] != '主观题']
             df_essay = df[df['错误类型'] == '主观题']
             
-            # ---------------- 模块一：客观题统计 ----------------
-            st.subheader("🎯 第一部分：理解性默写统计")
+            st.subheader("🎯 第一部分：理解性默写统计 (包含巩固数据)")
             if len(df_fill) > 0:
                 col1, col2 = st.columns(2)
-                col1.metric("默写交卷人次", f"{len(df_fill)} 人次")
+                col1.metric("默写总提交人次", f"{len(df_fill)} 人次")
                 correct_count = len(df_fill[df_fill['错误类型'] == '无错'])
                 col2.metric("完全正确人次", f"{correct_count} 人次")
                 
@@ -262,26 +312,21 @@ elif role == "👩‍🏫 教师端":
                 ).properties(height=250)
                 st.altair_chart(chart, use_container_width=True)
                 
-                with st.expander("查看默写题详细作答记录"):
+                with st.expander("查看默写题详细作答记录 (带有'二次巩固'字样为追问题)"):
                     st.dataframe(df_fill, use_container_width=True)
             else:
                 st.info("暂无理解性默写的作答数据。")
                 
             st.divider()
             
-            # ---------------- 模块二：主观题统计 ----------------
             st.subheader("✍️ 第二部分：主观题作答追踪")
             if len(df_essay) > 0:
-                st.write("以下是全班同学对于主观题的原始作答内容：")
-                # 教师端提取展示“学号”字段
                 st.dataframe(df_essay[['学号', '学生姓名', '题目', '学生作答']], use_container_width=True)
-                
                 with st.expander("查看主观题 AI 点评记录"):
                     st.dataframe(df_essay[['学号', '学生姓名', '题目', 'AI 详细反馈']], use_container_width=True)
             else:
                 st.info("暂无主观题的作答数据。")
                 
-            # ---------------- 模块三：数据管理 ----------------
             st.divider()
             if st.button("🗑️ 清空所有学生数据", type="primary", use_container_width=True):
                 if os.path.exists(DATA_FILE):
@@ -289,7 +334,6 @@ elif role == "👩‍🏫 教师端":
                 st.success("✅ 数据已成功清空！界面即将刷新...")
                 time.sleep(1)
                 st.rerun()
-                
         else:
             st.info("目前还没有学生交卷哦，稍后再来查看吧！")
     elif teacher_pwd != "":
