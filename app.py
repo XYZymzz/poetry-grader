@@ -4,7 +4,7 @@ import pandas as pd
 import os
 import json
 import altair as alt
-import base64  
+import base64
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -67,6 +67,9 @@ if "fu_completed" not in st.session_state:
     st.session_state.fu_completed = False      
 if "fu_result_dict" not in st.session_state:
     st.session_state.fu_result_dict = {}       
+# 新增：用于备份学生在巩固题中填写的答案
+if "fu_submitted_ans" not in st.session_state:
+    st.session_state.fu_submitted_ans = ""     
 
 # ==========================================
 # 数据持久化
@@ -204,6 +207,7 @@ if role == "👨‍🎓 学生端":
         st.session_state.follow_up_active = False
         st.session_state.fu_completed = False
         st.session_state.fu_result_dict = {}
+        st.session_state.fu_submitted_ans = ""
 
     # ---------------- 状态分离 A：正常作答模式 ----------------
     if not st.session_state.follow_up_active:
@@ -218,9 +222,11 @@ if role == "👨‍🎓 学生端":
         with st.form(key="student_submit_form"):
             col1, col2 = st.columns(2)
             with col1:
-                student_name = st.text_input("请输入姓名：", key="main_name_input")
+                # 修复问题2：绑定 value 属性，让界面从巩固模式回来时依然保留名字
+                student_name = st.text_input("请输入姓名：", value=st.session_state.temp_name)
             with col2:
-                student_id = st.text_input("请输入学号（8位纯数字）：", key="main_id_input")
+                # 修复问题2：绑定 value 属性，保留学号
+                student_id = st.text_input("请输入学号（8位纯数字）：", value=st.session_state.temp_id)
             
             if current_q_type == "essay":
                 student_answer = st.text_area("请输入你的答案：", key=f"answer_{selected_q_id}", height=150)
@@ -230,6 +236,10 @@ if role == "👨‍🎓 学生端":
             submitted = st.form_submit_button("🚀 提交并获取批改")
 
         if submitted:
+            # 严谨的数据拦截：提交瞬间立刻更新全局状态，确保返回时数据不丢
+            st.session_state.temp_name = student_name
+            st.session_state.temp_id = student_id
+
             if student_answer.strip() == "" or student_name.strip() == "" or student_id.strip() == "":
                 st.warning("⚠️ 学号、姓名和答案都不能为空哦！请重新填写。")
             elif not student_id.isdigit() or len(student_id) != 8:
@@ -263,8 +273,6 @@ if role == "👨‍🎓 学生端":
                             st.session_state.follow_up_active = True
                             st.session_state.wrong_feedback = ai_result_dict.get("feedback")
                             st.session_state.follow_up_q = ai_result_dict.get("follow_up_q", f"请再次默写这句诗：{current_standard_answer}")
-                            st.session_state.temp_name = student_name
-                            st.session_state.temp_id = student_id
                             st.rerun()  
                         else:
                             st.success(f"批改完成！成绩已成功上传至教师端。")
@@ -288,17 +296,20 @@ if role == "👨‍🎓 学生端":
             with st.form(key="follow_up_form"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    student_name = st.text_input("请输入姓名：", value=st.session_state.temp_name, key="fu_name")
+                    # 严谨控制：在错题模式下，直接锁定身份信息框，防止乱改导致数据串线
+                    st.text_input("当前身份：", value=st.session_state.temp_name, disabled=True)
                 with col2:
-                    student_id = st.text_input("请输入学号（8位纯数字）：", value=st.session_state.temp_id, key="fu_id")
+                    st.text_input("当前学号：", value=st.session_state.temp_id, disabled=True)
                 
-                fu_answer = st.text_input("请输入巩固题的答案：", key="fu_ans")
+                fu_answer = st.text_input("请输入巩固题的答案：")
                 fu_submitted = st.form_submit_button("🚀 提交巩固作答")
 
             if fu_submitted:
                 if fu_answer.strip() == "":
                     st.warning("巩固题答案不能为空！")
                 else:
+                    # 修复问题1：提交的一瞬间，立刻把答案备份进状态库
+                    st.session_state.fu_submitted_ans = fu_answer
                     final_prompt = prompt_follow_up.format(q=st.session_state.follow_up_q, a=current_standard_answer, s=fu_answer)
                     
                     with st.spinner("AI 老师正在认真审阅你的巩固答案..."):
@@ -312,8 +323,8 @@ if role == "👨‍🎓 学生端":
                             fu_ai_result = json.loads(response.choices[0].message.content)
                             
                             fu_record = {
-                                "学号": student_id,
-                                "学生姓名": student_name,
+                                "学号": st.session_state.temp_id,
+                                "学生姓名": st.session_state.temp_name,
                                 "题目": selected_q_id + " (二次巩固)",
                                 "学生作答": fu_answer,
                                 "判定状态": fu_ai_result.get("status"),
@@ -329,6 +340,9 @@ if role == "👨‍🎓 学生端":
                         except Exception as e:
                             st.error(f"网络异常：{e}")
         else:
+            # 修复问题1：在展示结果时，专门把备份的答案重新展示出来
+            st.info(f"📝 **你在巩固题中的作答：** {st.session_state.fu_submitted_ans}")
+            
             res = st.session_state.fu_result_dict
             if res.get("status") == "correct":
                 st.success("🎉 太棒了！巩固题回答完全正确，看来你已经掌握了！")
@@ -343,6 +357,7 @@ if role == "👨‍🎓 学生端":
                 st.session_state.follow_up_active = False
                 st.session_state.fu_completed = False
                 st.session_state.fu_result_dict = {}
+                st.session_state.fu_submitted_ans = ""  # 清空缓存
                 st.rerun()
 
 elif role == "👩‍🏫 教师端":
