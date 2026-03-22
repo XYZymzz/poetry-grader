@@ -125,7 +125,7 @@ questions_db = {
 }
 
 # ==========================================
-# 提示词矩阵（精准锁定：防出题跑偏）
+# 提示词矩阵（严谨内核 + 温柔外表 + 精准锁定）
 # ==========================================
 prompt_fill = """
 你是一个专业严谨但态度极其温柔、懂得启发学生的语文老师。你的任务是批改学生关于王维《使至塞上》的理解性默写题。
@@ -296,7 +296,8 @@ if role == "👨‍🎓 学生端":
         with col_info2:
             st.text_input("学号：", value=st.session_state.temp_id, disabled=True)
 
-        st.text_input("📝 你在原题中的作答（对比用）：", value=st.session_state.orig_ans, disabled=True)
+        # 这里已经去掉了多余的“（对比用）”
+        st.text_input("📝 你在原题中的作答：", value=st.session_state.orig_ans, disabled=True)
         st.write("✨ **首次作答诊断：**", st.session_state.wrong_feedback)
         
         st.divider()
