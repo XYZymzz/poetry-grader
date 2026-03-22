@@ -62,14 +62,15 @@ if "follow_up_q" not in st.session_state:
 if "wrong_feedback" not in st.session_state:
     st.session_state.wrong_feedback = ""       
 
-# 用于控制巩固题闭环的子状态
 if "fu_completed" not in st.session_state:
     st.session_state.fu_completed = False      
 if "fu_result_dict" not in st.session_state:
     st.session_state.fu_result_dict = {}       
-# 新增：用于备份学生在巩固题中填写的答案
 if "fu_submitted_ans" not in st.session_state:
     st.session_state.fu_submitted_ans = ""     
+# 新增：用于彻底解决问题1，备份原题的错误作答
+if "orig_ans" not in st.session_state:
+    st.session_state.orig_ans = ""
 
 # ==========================================
 # 数据持久化
@@ -208,6 +209,7 @@ if role == "👨‍🎓 学生端":
         st.session_state.fu_completed = False
         st.session_state.fu_result_dict = {}
         st.session_state.fu_submitted_ans = ""
+        st.session_state.orig_ans = ""
 
     # ---------------- 状态分离 A：正常作答模式 ----------------
     if not st.session_state.follow_up_active:
@@ -222,10 +224,8 @@ if role == "👨‍🎓 学生端":
         with st.form(key="student_submit_form"):
             col1, col2 = st.columns(2)
             with col1:
-                # 修复问题2：绑定 value 属性，让界面从巩固模式回来时依然保留名字
                 student_name = st.text_input("请输入姓名：", value=st.session_state.temp_name)
             with col2:
-                # 修复问题2：绑定 value 属性，保留学号
                 student_id = st.text_input("请输入学号（8位纯数字）：", value=st.session_state.temp_id)
             
             if current_q_type == "essay":
@@ -236,7 +236,6 @@ if role == "👨‍🎓 学生端":
             submitted = st.form_submit_button("🚀 提交并获取批改")
 
         if submitted:
-            # 严谨的数据拦截：提交瞬间立刻更新全局状态，确保返回时数据不丢
             st.session_state.temp_name = student_name
             st.session_state.temp_id = student_id
 
@@ -273,6 +272,7 @@ if role == "👨‍🎓 学生端":
                             st.session_state.follow_up_active = True
                             st.session_state.wrong_feedback = ai_result_dict.get("feedback")
                             st.session_state.follow_up_q = ai_result_dict.get("follow_up_q", f"请再次默写这句诗：{current_standard_answer}")
+                            st.session_state.orig_ans = student_answer  # <--- 彻底修复问题1：拦截并保存原题错误答案
                             st.rerun()  
                         else:
                             st.success(f"批改完成！成绩已成功上传至教师端。")
@@ -286,6 +286,9 @@ if role == "👨‍🎓 学生端":
     # ---------------- 状态分离 B：错题巩固模式 ----------------
     else:
         st.error("❌ 哎呀，你刚才的作答有误，系统已为你开启【错题巩固模式】！")
+        
+        # 彻底修复问题1：用锁定的输入框原汁原味地展示学生的错误作答
+        st.text_input("📝 你在原题中的作答（对比用）：", value=st.session_state.orig_ans, disabled=True)
         st.write("✨ **首次作答诊断：**", st.session_state.wrong_feedback)
         
         st.divider()
@@ -296,7 +299,6 @@ if role == "👨‍🎓 学生端":
             with st.form(key="follow_up_form"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    # 严谨控制：在错题模式下，直接锁定身份信息框，防止乱改导致数据串线
                     st.text_input("当前身份：", value=st.session_state.temp_name, disabled=True)
                 with col2:
                     st.text_input("当前学号：", value=st.session_state.temp_id, disabled=True)
@@ -308,7 +310,6 @@ if role == "👨‍🎓 学生端":
                 if fu_answer.strip() == "":
                     st.warning("巩固题答案不能为空！")
                 else:
-                    # 修复问题1：提交的一瞬间，立刻把答案备份进状态库
                     st.session_state.fu_submitted_ans = fu_answer
                     final_prompt = prompt_follow_up.format(q=st.session_state.follow_up_q, a=current_standard_answer, s=fu_answer)
                     
@@ -340,8 +341,8 @@ if role == "👨‍🎓 学生端":
                         except Exception as e:
                             st.error(f"网络异常：{e}")
         else:
-            # 修复问题1：在展示结果时，专门把备份的答案重新展示出来
-            st.info(f"📝 **你在巩固题中的作答：** {st.session_state.fu_submitted_ans}")
+            # 彻底修复问题1：巩固题提交后，依然用锁定的输入框保留其作答
+            st.text_input("📝 你在巩固题中的作答：", value=st.session_state.fu_submitted_ans, disabled=True)
             
             res = st.session_state.fu_result_dict
             if res.get("status") == "correct":
@@ -357,7 +358,8 @@ if role == "👨‍🎓 学生端":
                 st.session_state.follow_up_active = False
                 st.session_state.fu_completed = False
                 st.session_state.fu_result_dict = {}
-                st.session_state.fu_submitted_ans = ""  # 清空缓存
+                st.session_state.fu_submitted_ans = ""  
+                st.session_state.orig_ans = ""
                 st.rerun()
 
 elif role == "👩‍🏫 教师端":
