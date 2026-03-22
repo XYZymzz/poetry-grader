@@ -4,7 +4,7 @@ import pandas as pd
 import os
 import json
 import altair as alt
-import base64  # 新增：用于处理图片的 Base64 编码
+import base64  
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -22,19 +22,12 @@ client = OpenAI(
 # 核心升级：读取本地图片并进行 Base64 注入
 # ==========================================
 def set_bg_from_local(image_file):
-    """
-    严谨的前端样式注入：
-    1. 检查本地文件是否存在
-    2. 以二进制读取图片并进行 Base64 编码
-    3. 组装 data URI scheme 并注入 CSS
-    """
     if os.path.exists(image_file):
         with open(image_file, "rb") as f:
             data = f.read()
             
         b64_encoded = base64.b64encode(data).decode()
         
-        # 使用 image/jpeg 适配你的 background.jpg 文件
         page_bg_img = f"""
         <style>
         .stApp {{
@@ -49,10 +42,8 @@ def set_bg_from_local(image_file):
         """
         st.markdown(page_bg_img, unsafe_allow_html=True)
     else:
-        # 严谨的容错机制：如果图片丢失，不要崩溃，在页面上方给开发者一个温馨提示
         st.warning(f"⚠️ 系统提示：未能找到背景图片 '{image_file}'，请确认图片是否与 app.py 在同一目录下。")
 
-# 调用函数，传入你项目目录下的本地图片名称
 set_bg_from_local("background.jpg")
 
 # ==========================================
@@ -70,6 +61,12 @@ if "follow_up_q" not in st.session_state:
     st.session_state.follow_up_q = ""          
 if "wrong_feedback" not in st.session_state:
     st.session_state.wrong_feedback = ""       
+
+# 用于控制巩固题闭环的子状态
+if "fu_completed" not in st.session_state:
+    st.session_state.fu_completed = False      
+if "fu_result_dict" not in st.session_state:
+    st.session_state.fu_result_dict = {}       
 
 # ==========================================
 # 数据持久化
@@ -125,43 +122,61 @@ questions_db = {
 }
 
 # ==========================================
-# 提示词矩阵
+# 提示词矩阵（严谨内核 + 温柔外表）
 # ==========================================
 prompt_fill = """
-你是一个严谨且懂得启发学生的语文老师。你的任务是批改学生关于王维《使至塞上》的理解性默写题。
+你是一个专业严谨但态度极其温柔、懂得启发学生的语文老师。你的任务是批改学生关于王维《使至塞上》的理解性默写题。
 【题目】：{q}
 【标准答案】：{a}
 【学生作答】：{s}
 
-请按以下规则批改，并严格只输出 JSON 格式的数据：
-1. 如果学生作答与标准答案完全一致，判定为 correct，error_type 为 "无错"。
-2. 如果学生填对了句子，但有错别字，判定为 typo，error_type 为 "错别字"。你需要指出错字、给出正确字。
-3. 如果学生句子完全填错，判定为 wrong，error_type 为 "诗句填错"。你需要给出标准答案，并基于该答案重新设计一道全新的填空测试题（例如改变提问的角度），放在 follow_up_q 字段中。
+请按以下严谨的标准批改，并只输出 JSON 格式的数据：
+1. 判定逻辑（必须严谨）：与标准答案完全一致判定为 correct；有错别字判定为 typo；完全填错判定为 wrong（并在 follow_up_q 字段中，基于标准答案重新设计一道全新视角的填空测试题）。
+2. 语气约束（必须温柔）：你的 feedback 必须使用温柔、鼓励的语气。答对要热烈赞美；答错要温柔安抚并耐心引导（多用“没关系哦”、“我们一起来看看”等词汇），严禁使用生硬指责的口吻。
 
 你的 JSON 输出格式必须严格如下：
 {{
   "status": "correct | typo | wrong",
-  "feedback": "给学生的反馈话语",
+  "feedback": "极其温柔、带有鼓励性质的反馈话语",
   "error_type": "无错 | 错别字 | 诗句填错",
   "follow_up_q": "如果是 wrong，这里填入新设计的测试题，否则为空字符串"
 }}
 """
 
 prompt_essay = """
-你是一个严谨且充满鼓励的语文老师。你的任务是批改学生关于王维《使至塞上》的主观问答题。
+你是一个专业严谨但态度极其温柔、充满鼓励的语文老师。你的任务是批改学生关于王维《使至塞上》的主观问答题。
 【题目】：{q}
 【标准答案】：{a}
 【学生作答】：{s}
 
-请按以下规则批改，并严格只输出 JSON 格式的数据：
-1. 对比学生的作答与标准答案，肯定学生的闪光点，并指出遗漏的角度，给出合理的修改建议。
-2. 语气要温和鼓励。
+请按以下严谨的标准批改，并只输出 JSON 格式的数据：
+1. 批改逻辑（必须严谨）：严格对比标准答案的采分点，准确指出学生遗漏的角度和需要提升的地方。
+2. 语气约束（必须温柔）：像知心导师一样，先敏锐地放大夸奖学生的思考闪光点，再用非常温柔、有亲和力的语气给出修改建议。
 
 你的 JSON 输出格式必须严格如下：
 {{
   "status": "subjective",
-  "feedback": "给学生的点评和详细建议",
+  "feedback": "极其温柔、充满夸奖与鼓励的点评和详细建议",
   "error_type": "主观题"
+}}
+"""
+
+prompt_follow_up = """
+你是一个专业严谨但极其包容的语文老师。现在学生正在进行【错题巩固训练】。
+【巩固题目】：{q}
+【该诗句标准答案】：{a}
+【学生作答】：{s}
+
+请按以下严谨的标准批改，并只输出 JSON 格式的数据：
+1. 批改逻辑（必须严谨）：明确且准确地告知学生这次写对了还是写错了，精准指出错在哪里。
+2. 严禁行为：绝对禁止再出新的测试题！只需给出本次作答的点评。
+3. 语气约束（必须温柔）：面对错题重练的学生，你的语气必须加倍温柔。答对给予高度认可；答错要极其温柔地安抚和解析（例如：“哎呀，就差一点点哦，不要气馁，老师陪你再看一遍……”）。
+
+你的 JSON 输出格式必须严格如下：
+{{
+  "status": "correct | typo | wrong",
+  "feedback": "极其温柔且带有安抚性质的反馈话语（明确对错，指出细节，绝对不要包含新题目）",
+  "error_type": "无错 | 错别字 | 诗句填错"
 }}
 """
 
@@ -187,6 +202,8 @@ if role == "👨‍🎓 学生端":
     if st.session_state.last_q_id != selected_q_id:
         st.session_state.last_q_id = selected_q_id
         st.session_state.follow_up_active = False
+        st.session_state.fu_completed = False
+        st.session_state.fu_result_dict = {}
 
     # ---------------- 状态分离 A：正常作答模式 ----------------
     if not st.session_state.follow_up_active:
@@ -261,57 +278,72 @@ if role == "👨‍🎓 学生端":
     # ---------------- 状态分离 B：错题巩固模式 ----------------
     else:
         st.error("❌ 哎呀，你刚才的作答有误，系统已为你开启【错题巩固模式】！")
-        st.write("✨ **AI 老师的诊断：**", st.session_state.wrong_feedback)
+        st.write("✨ **首次作答诊断：**", st.session_state.wrong_feedback)
         
         st.divider()
         st.markdown(f"### 🎯 巩固题靶向训练：")
         st.info(st.session_state.follow_up_q)
 
-        with st.form(key="follow_up_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                student_name = st.text_input("请输入姓名：", value=st.session_state.temp_name, key="fu_name")
-            with col2:
-                student_id = st.text_input("请输入学号（8位纯数字）：", value=st.session_state.temp_id, key="fu_id")
-            
-            fu_answer = st.text_input("请输入巩固题的答案：", key="fu_ans")
-            fu_submitted = st.form_submit_button("🚀 提交巩固作答")
-
-        if fu_submitted:
-            if fu_answer.strip() == "":
-                st.warning("巩固题答案不能为空！")
-            else:
-                final_prompt = prompt_fill.format(q=st.session_state.follow_up_q, a=current_standard_answer, s=fu_answer)
+        if not st.session_state.fu_completed:
+            with st.form(key="follow_up_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    student_name = st.text_input("请输入姓名：", value=st.session_state.temp_name, key="fu_name")
+                with col2:
+                    student_id = st.text_input("请输入学号（8位纯数字）：", value=st.session_state.temp_id, key="fu_id")
                 
-                with st.spinner("AI 老师正在批阅巩固题..."):
-                    try:
-                        response = client.chat.completions.create(
-                            model="deepseek-chat", 
-                            messages=[{"role": "user", "content": final_prompt}],
-                            response_format={"type": "json_object"}, 
-                            temperature=0.1 
-                        )
-                        fu_ai_result = json.loads(response.choices[0].message.content)
-                        
-                        fu_record = {
-                            "学号": student_id,
-                            "学生姓名": student_name,
-                            "题目": selected_q_id + " (二次巩固)",
-                            "学生作答": fu_answer,
-                            "判定状态": fu_ai_result.get("status"),
-                            "错误类型": fu_ai_result.get("error_type"),
-                            "AI 详细反馈": fu_ai_result.get("feedback")
-                        }
-                        save_record(fu_record)
-                        
-                        st.success("✅ 巩固题批改完成！成绩已录入账本。系统即将返回原题模式...")
-                        time.sleep(2) 
-                        
-                        st.session_state.follow_up_active = False
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"网络异常：{e}")
+                fu_answer = st.text_input("请输入巩固题的答案：", key="fu_ans")
+                fu_submitted = st.form_submit_button("🚀 提交巩固作答")
+
+            if fu_submitted:
+                if fu_answer.strip() == "":
+                    st.warning("巩固题答案不能为空！")
+                else:
+                    final_prompt = prompt_follow_up.format(q=st.session_state.follow_up_q, a=current_standard_answer, s=fu_answer)
+                    
+                    with st.spinner("AI 老师正在认真审阅你的巩固答案..."):
+                        try:
+                            response = client.chat.completions.create(
+                                model="deepseek-chat", 
+                                messages=[{"role": "user", "content": final_prompt}],
+                                response_format={"type": "json_object"}, 
+                                temperature=0.1 
+                            )
+                            fu_ai_result = json.loads(response.choices[0].message.content)
+                            
+                            fu_record = {
+                                "学号": student_id,
+                                "学生姓名": student_name,
+                                "题目": selected_q_id + " (二次巩固)",
+                                "学生作答": fu_answer,
+                                "判定状态": fu_ai_result.get("status"),
+                                "错误类型": fu_ai_result.get("error_type"),
+                                "AI 详细反馈": fu_ai_result.get("feedback")
+                            }
+                            save_record(fu_record)
+                            
+                            st.session_state.fu_result_dict = fu_ai_result
+                            st.session_state.fu_completed = True
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"网络异常：{e}")
+        else:
+            res = st.session_state.fu_result_dict
+            if res.get("status") == "correct":
+                st.success("🎉 太棒了！巩固题回答完全正确，看来你已经掌握了！")
+            elif res.get("status") == "typo":
+                st.warning("👀 哎呀，还是有点小瑕疵（写了错别字），下次一定要注意细节哦。")
+            else:
+                st.error("❌ 还是不对哦，请仔细查看老师的最终解析，课后记得多加复习。")
+            
+            st.write("✨ **AI 老师对巩固题的点评：**", res.get("feedback"))
+            
+            if st.button("🔙 结束本次巩固，返回原题模式", type="primary"):
+                st.session_state.follow_up_active = False
+                st.session_state.fu_completed = False
+                st.session_state.fu_result_dict = {}
+                st.rerun()
 
 elif role == "👩‍🏫 教师端":
     st.title("📊 班级学情汇总大屏 (教师端)")
