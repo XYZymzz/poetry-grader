@@ -68,7 +68,6 @@ if "fu_result_dict" not in st.session_state:
     st.session_state.fu_result_dict = {}       
 if "fu_submitted_ans" not in st.session_state:
     st.session_state.fu_submitted_ans = ""     
-# 新增：用于彻底解决问题1，备份原题的错误作答
 if "orig_ans" not in st.session_state:
     st.session_state.orig_ans = ""
 
@@ -126,7 +125,7 @@ questions_db = {
 }
 
 # ==========================================
-# 提示词矩阵（严谨内核 + 温柔外表）
+# 提示词矩阵
 # ==========================================
 prompt_fill = """
 你是一个专业严谨但态度极其温柔、懂得启发学生的语文老师。你的任务是批改学生关于王维《使至塞上》的理解性默写题。
@@ -272,7 +271,7 @@ if role == "👨‍🎓 学生端":
                             st.session_state.follow_up_active = True
                             st.session_state.wrong_feedback = ai_result_dict.get("feedback")
                             st.session_state.follow_up_q = ai_result_dict.get("follow_up_q", f"请再次默写这句诗：{current_standard_answer}")
-                            st.session_state.orig_ans = student_answer  # <--- 彻底修复问题1：拦截并保存原题错误答案
+                            st.session_state.orig_ans = student_answer  
                             st.rerun()  
                         else:
                             st.success(f"批改完成！成绩已成功上传至教师端。")
@@ -287,7 +286,13 @@ if role == "👨‍🎓 学生端":
     else:
         st.error("❌ 哎呀，你刚才的作答有误，系统已为你开启【错题巩固模式】！")
         
-        # 彻底修复问题1：用锁定的输入框原汁原味地展示学生的错误作答
+        # UI 重构：将姓名和学号提升至“背景上下文”区域，与原题作答并排或上下展示
+        col_info1, col_info2 = st.columns(2)
+        with col_info1:
+            st.text_input("姓名：", value=st.session_state.temp_name, disabled=True)
+        with col_info2:
+            st.text_input("学号：", value=st.session_state.temp_id, disabled=True)
+
         st.text_input("📝 你在原题中的作答（对比用）：", value=st.session_state.orig_ans, disabled=True)
         st.write("✨ **首次作答诊断：**", st.session_state.wrong_feedback)
         
@@ -296,13 +301,8 @@ if role == "👨‍🎓 学生端":
         st.info(st.session_state.follow_up_q)
 
         if not st.session_state.fu_completed:
+            # 现在的表单里面变得极其纯粹，只有一道答题框
             with st.form(key="follow_up_form"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.text_input("当前身份：", value=st.session_state.temp_name, disabled=True)
-                with col2:
-                    st.text_input("当前学号：", value=st.session_state.temp_id, disabled=True)
-                
                 fu_answer = st.text_input("请输入巩固题的答案：")
                 fu_submitted = st.form_submit_button("🚀 提交巩固作答")
 
@@ -323,6 +323,7 @@ if role == "👨‍🎓 学生端":
                             )
                             fu_ai_result = json.loads(response.choices[0].message.content)
                             
+                            # 虽然表单里没有姓名学号了，但我们可以直接从 session_state 里读取，保证数据写入绝对安全
                             fu_record = {
                                 "学号": st.session_state.temp_id,
                                 "学生姓名": st.session_state.temp_name,
@@ -341,7 +342,6 @@ if role == "👨‍🎓 学生端":
                         except Exception as e:
                             st.error(f"网络异常：{e}")
         else:
-            # 彻底修复问题1：巩固题提交后，依然用锁定的输入框保留其作答
             st.text_input("📝 你在巩固题中的作答：", value=st.session_state.fu_submitted_ans, disabled=True)
             
             res = st.session_state.fu_result_dict
