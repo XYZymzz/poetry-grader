@@ -4,6 +4,7 @@ import pandas as pd
 import os
 import json
 import altair as alt
+import base64  # 新增：用于处理图片的 Base64 编码
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -18,29 +19,41 @@ client = OpenAI(
 )
 
 # ==========================================
-# 核心升级：网页全局背景图注入 (CSS Injection)
+# 核心升级：读取本地图片并进行 Base64 注入
 # ==========================================
-def set_background(image_url):
+def set_bg_from_local(image_file):
     """
-    严谨的前端样式注入：通过覆写 .stApp 类的底层 CSS 来实现全屏背景覆盖。
+    严谨的前端样式注入：
+    1. 检查本地文件是否存在
+    2. 以二进制读取图片并进行 Base64 编码
+    3. 组装 data URI scheme 并注入 CSS
     """
-    page_bg_img = f"""
-    <style>
-    .stApp {{
-        background-image: url("{image_url}");
-        background-size: cover;
-        background-position: center;
-        background-attachment: fixed;
-        /* 添加一层半透明的白色遮罩，防止背景图过亮导致文字看不清 */
-        background-color: rgba(255,255,255,0.6);
-        background-blend-mode: overlay;
-    }}
-    </style>
-    """
-    st.markdown(page_bg_img, unsafe_allow_html=True)
+    if os.path.exists(image_file):
+        with open(image_file, "rb") as f:
+            data = f.read()
+            
+        b64_encoded = base64.b64encode(data).decode()
+        
+        # 使用 image/jpeg 适配你的 background.jpg 文件
+        page_bg_img = f"""
+        <style>
+        .stApp {{
+            background-image: url("data:image/jpeg;base64,{b64_encoded}");
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+            background-color: rgba(255,255,255,0.6);
+            background-blend-mode: overlay;
+        }}
+        </style>
+        """
+        st.markdown(page_bg_img, unsafe_allow_html=True)
+    else:
+        # 严谨的容错机制：如果图片丢失，不要崩溃，在页面上方给开发者一个温馨提示
+        st.warning(f"⚠️ 系统提示：未能找到背景图片 '{image_file}'，请确认图片是否与 app.py 在同一目录下。")
 
-# 调用函数设置背景图（这里使用了一张唯美的水墨淡雅背景，你可以把引号里的链接换成你想要的任何图片地址）
-set_background("https://images.unsplash.com/photo-1614850523459-c2f4c699c52e?q=80&w=2070&auto=format&fit=crop")
+# 调用函数，传入你项目目录下的本地图片名称
+set_bg_from_local("background.jpg")
 
 # ==========================================
 # 高阶应用：初始化全局状态机 (Session State)
@@ -112,7 +125,7 @@ questions_db = {
 }
 
 # ==========================================
-# 提示词矩阵（自适应出题逻辑）
+# 提示词矩阵
 # ==========================================
 prompt_fill = """
 你是一个严谨且懂得启发学生的语文老师。你的任务是批改学生关于王维《使至塞上》的理解性默写题。
@@ -171,7 +184,6 @@ if role == "👨‍🎓 学生端":
     current_q_text = current_q_data["question"]
     current_standard_answer = current_q_data["answer"]
 
-    # 监听用户切换题目动作，强制清除残留的错题状态
     if st.session_state.last_q_id != selected_q_id:
         st.session_state.last_q_id = selected_q_id
         st.session_state.follow_up_active = False
@@ -219,7 +231,6 @@ if role == "👨‍🎓 学生端":
                         )
                         ai_result_dict = json.loads(response.choices[0].message.content)
                         
-                        # 先将原题记录入库
                         new_record = {
                             "学号": student_id,
                             "学生姓名": student_name,
@@ -231,7 +242,6 @@ if role == "👨‍🎓 学生端":
                         }
                         save_record(new_record)
 
-                        # 核心状态机触发器
                         if current_q_type == "fill" and ai_result_dict.get("status") == "wrong":
                             st.session_state.follow_up_active = True
                             st.session_state.wrong_feedback = ai_result_dict.get("feedback")
