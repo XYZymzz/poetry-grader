@@ -49,15 +49,19 @@ set_bg_from_local("background.jpg")
 # ==========================================
 # 高阶应用：初始化全局状态机 (Session State)
 # ==========================================
+# --- 新增：学生全局登录状态 ---
+if "student_logged_in" not in st.session_state:
+    st.session_state.student_logged_in = False
+if "current_student_name" not in st.session_state:
+    st.session_state.current_student_name = ""
+if "current_student_id" not in st.session_state:
+    st.session_state.current_student_id = ""
+
 # --- 原有批改相关状态 ---
 if "follow_up_active" not in st.session_state:
     st.session_state.follow_up_active = False  
 if "last_q_id" not in st.session_state:
     st.session_state.last_q_id = None          
-if "temp_name" not in st.session_state:
-    st.session_state.temp_name = ""            
-if "temp_id" not in st.session_state:
-    st.session_state.temp_id = ""              
 if "follow_up_q" not in st.session_state:
     st.session_state.follow_up_q = ""          
 if "wrong_feedback" not in st.session_state:
@@ -71,7 +75,7 @@ if "fu_submitted_ans" not in st.session_state:
 if "orig_ans" not in st.session_state:
     st.session_state.orig_ans = ""
 
-# --- 新增：聊天互动相关状态 ---
+# --- 聊天互动相关状态 ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
         {"role": "assistant", "content": "你好！我是你的专属国学导师。关于王维的《使至塞上》，无论是字词的含义、画面的意境，还是诗人内心深处的情感，你都可以随时向我提问探讨哦。"}
@@ -190,7 +194,6 @@ prompt_follow_up = """
 }}
 """
 
-# 新增：自由聊天话题锁 Prompt
 prompt_chat_system = """
 你是一位精通中国古典诗词的国学导师。你现在的唯一任务是陪学生探讨王维的《使至塞上》。
 【核心约束】：
@@ -209,133 +212,90 @@ role = st.sidebar.radio("请选择登录身份：", ["👨‍🎓 学生端", "�
 # 业务逻辑视图
 # ==========================================
 if role == "👨‍🎓 学生端":
-    st.title("📖 王维《使至塞上》智能学习系统")
     
-    # 核心架构调整：引入标签页 (Tabs) 实现功能隔离
-    tab_grade, tab_chat = st.tabs(["📝 智能批改区", "💬 诗词鉴赏探讨"])
-
     # ---------------------------------------------------------
-    # 标签页一：原有的智能批改功能
+    # 鉴权路由：未登录则展示全局登录网关
     # ---------------------------------------------------------
-    with tab_grade:
-        selected_q_id = st.selectbox("请选择你要测试的题目：", list(questions_db.keys()))
-        current_q_data = questions_db[selected_q_id]
-        current_q_type = current_q_data["type"]
-        current_q_text = current_q_data["question"]
-        current_standard_answer = current_q_data["answer"]
-
-        if st.session_state.last_q_id != selected_q_id:
-            st.session_state.last_q_id = selected_q_id
-            st.session_state.follow_up_active = False
-            st.session_state.fu_completed = False
-            st.session_state.fu_result_dict = {}
-            st.session_state.fu_submitted_ans = ""
-            st.session_state.orig_ans = ""
-
-        # 正常作答模式
-        if not st.session_state.follow_up_active:
-            st.markdown(f"### 📌 题目内容：")
-            st.success(current_q_text)
+    if not st.session_state.student_logged_in:
+        st.title("🎓 诗驿学习系统登录")
+        st.markdown("欢迎来到《使至塞上》智能学习平台！请先登记你的身份信息。")
+        
+        with st.form("login_form"):
+            login_name = st.text_input("👤 请输入真实姓名：")
+            login_id = st.text_input("🔢 请输入学号（8位纯数字）：")
+            login_submit = st.form_submit_button("🚀 验证并进入系统", type="primary")
             
-            if current_q_type == "essay":
-                st.caption("👇 这是一道主观题，请在下方尽情输入你的分析与见解")
-            else:
-                st.caption("👇 请仔细阅读上方提示，并在下方输入正确的诗句")
+            if login_submit:
+                if login_name.strip() == "":
+                    st.error("⚠️ 姓名不能为空，请重新输入！")
+                elif not login_id.isdigit() or len(login_id) != 8:
+                    st.error("🚨 学号格式错误！必须是刚好 8 位的纯数字。")
+                else:
+                    # 登录成功，写入全局状态机并强制页面刷新
+                    st.session_state.student_logged_in = True
+                    st.session_state.current_student_name = login_name.strip()
+                    st.session_state.current_student_id = login_id.strip()
+                    st.rerun()
+                    
+    # ---------------------------------------------------------
+    # 鉴权路由：已登录则展示核心业务页面
+    # ---------------------------------------------------------
+    else:
+        # 顶部信息栏：欢迎语 + 退出登录按钮
+        col_title, col_logout = st.columns([8, 2])
+        col_title.title(f"📖 欢迎来到学习系统，{st.session_state.current_student_name} 同学！")
+        if col_logout.button("🚪 退出登录"):
+            st.session_state.student_logged_in = False
+            # 退出时清理聊天记录和答题状态，防止串号
+            st.session_state.chat_history = [{"role": "assistant", "content": "你好！我是你的专属国学导师。关于王维的《使至塞上》，你可以随时向我提问探讨哦。"}]
+            st.session_state.follow_up_active = False
+            st.rerun()
 
-            with st.form(key="student_submit_form"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    student_name = st.text_input("请输入姓名：", value=st.session_state.temp_name)
-                with col2:
-                    student_id = st.text_input("请输入学号（8位纯数字）：", value=st.session_state.temp_id)
+        # 引入标签页实现功能隔离
+        tab_grade, tab_chat = st.tabs(["📝 智能批改区", "💬 诗词鉴赏探讨"])
+
+        # ================= 标签页一：极简智能批改区 =================
+        with tab_grade:
+            selected_q_id = st.selectbox("请选择你要测试的题目：", list(questions_db.keys()))
+            current_q_data = questions_db[selected_q_id]
+            current_q_type = current_q_data["type"]
+            current_q_text = current_q_data["question"]
+            current_standard_answer = current_q_data["answer"]
+
+            if st.session_state.last_q_id != selected_q_id:
+                st.session_state.last_q_id = selected_q_id
+                st.session_state.follow_up_active = False
+                st.session_state.fu_completed = False
+                st.session_state.fu_result_dict = {}
+                st.session_state.fu_submitted_ans = ""
+                st.session_state.orig_ans = ""
+
+            # 正常作答模式（已完全剔除姓名和学号输入）
+            if not st.session_state.follow_up_active:
+                st.markdown(f"### 📌 题目内容：")
+                st.success(current_q_text)
                 
                 if current_q_type == "essay":
-                    student_answer = st.text_area("请输入你的答案：", key=f"answer_{selected_q_id}", height=150)
+                    st.caption("👇 这是一道主观题，请在下方尽情输入你的分析与见解")
                 else:
-                    student_answer = st.text_input("请输入你的答案：", key=f"answer_{selected_q_id}")
-                
-                submitted = st.form_submit_button("🚀 提交并获取批改")
+                    st.caption("👇 请仔细阅读上方提示，并在下方输入正确的诗句")
 
-            if submitted:
-                st.session_state.temp_name = student_name
-                st.session_state.temp_id = student_id
-
-                if student_answer.strip() == "" or student_name.strip() == "" or student_id.strip() == "":
-                    st.warning("⚠️ 学号、姓名和答案都不能为空哦！请重新填写。")
-                elif not student_id.isdigit() or len(student_id) != 8:
-                    st.warning("🚨 学号格式错误！必须是刚好 8 位的纯数字。")
-                else:
-                    active_prompt = prompt_essay if current_q_type == "essay" else prompt_fill
-                    final_prompt = active_prompt.format(q=current_q_text, a=current_standard_answer, s=student_answer)
-                    
-                    with st.spinner("AI 老师正在飞速批阅中，请稍候..."):
-                        try:
-                            response = client.chat.completions.create(
-                                model="deepseek-chat", 
-                                messages=[{"role": "user", "content": final_prompt}],
-                                response_format={"type": "json_object"}, 
-                                temperature=0.1 
-                            )
-                            ai_result_dict = json.loads(response.choices[0].message.content)
-                            
-                            new_record = {
-                                "学号": student_id,
-                                "学生姓名": student_name,
-                                "题目": selected_q_id,
-                                "学生作答": student_answer,
-                                "判定状态": ai_result_dict.get("status"),
-                                "错误类型": ai_result_dict.get("error_type"),
-                                "AI 详细反馈": ai_result_dict.get("feedback")
-                            }
-                            save_record(new_record)
-
-                            if current_q_type == "fill" and ai_result_dict.get("status") == "wrong":
-                                st.session_state.follow_up_active = True
-                                st.session_state.wrong_feedback = ai_result_dict.get("feedback")
-                                st.session_state.follow_up_q = ai_result_dict.get("follow_up_q", f"请再次默写这句诗：{current_standard_answer}")
-                                st.session_state.orig_ans = student_answer  
-                                st.rerun()  
-                            else:
-                                st.success(f"批改完成！成绩已成功上传至教师端。")
-                                st.write("✨ **AI 老师给你的专属反馈：**", ai_result_dict.get("feedback"))
-                                if current_q_type == "essay":
-                                    st.info(f"📖 **标准答案参考：**\n\n{current_standard_answer}")
-                        except Exception as e:
-                            st.error(f"网络异常：{e}")
-
-        # 错题巩固模式
-        else:
-            st.markdown(f"### 📌 原题内容：")
-            st.success(current_q_text)
-            
-            col_info1, col_info2 = st.columns(2)
-            with col_info1:
-                st.text_input("姓名：", value=st.session_state.temp_name, disabled=True)
-            with col_info2:
-                st.text_input("学号：", value=st.session_state.temp_id, disabled=True)
-
-            st.text_input("📝 你在原题中的作答：", value=st.session_state.orig_ans, disabled=True)
-            
-            st.error("❌ 哎呀，你刚才的作答有误，系统已为你开启【错题巩固模式】！")
-            st.write("✨ **首次作答诊断：**", st.session_state.wrong_feedback)
-            
-            st.divider()
-            st.markdown(f"### 🎯 巩固题靶向训练：")
-            st.info(st.session_state.follow_up_q)
-
-            if not st.session_state.fu_completed:
-                with st.form(key="follow_up_form"):
-                    fu_answer = st.text_input("请输入巩固题的答案：")
-                    fu_submitted = st.form_submit_button("🚀 提交巩固作答")
-
-                if fu_submitted:
-                    if fu_answer.strip() == "":
-                        st.warning("巩固题答案不能为空！")
+                with st.form(key="student_submit_form"):
+                    if current_q_type == "essay":
+                        student_answer = st.text_area("请输入你的答案：", key=f"answer_{selected_q_id}", height=150)
                     else:
-                        st.session_state.fu_submitted_ans = fu_answer
-                        final_prompt = prompt_follow_up.format(q=st.session_state.follow_up_q, a=current_standard_answer, s=fu_answer)
+                        student_answer = st.text_input("请输入你的答案：", key=f"answer_{selected_q_id}")
+                    
+                    submitted = st.form_submit_button("🚀 提交并获取批改")
+
+                if submitted:
+                    if student_answer.strip() == "":
+                        st.warning("⚠️ 答案不能为空哦！")
+                    else:
+                        active_prompt = prompt_essay if current_q_type == "essay" else prompt_fill
+                        final_prompt = active_prompt.format(q=current_q_text, a=current_standard_answer, s=student_answer)
                         
-                        with st.spinner("AI 老师正在认真审阅你的巩固答案..."):
+                        with st.spinner("AI 老师正在飞速批阅中，请稍候..."):
                             try:
                                 response = client.chat.completions.create(
                                     model="deepseek-chat", 
@@ -343,96 +303,152 @@ if role == "👨‍🎓 学生端":
                                     response_format={"type": "json_object"}, 
                                     temperature=0.1 
                                 )
-                                fu_ai_result = json.loads(response.choices[0].message.content)
+                                ai_result_dict = json.loads(response.choices[0].message.content)
                                 
-                                fu_record = {
-                                    "学号": st.session_state.temp_id,
-                                    "学生姓名": st.session_state.temp_name,
-                                    "题目": selected_q_id + " (二次巩固)",
-                                    "学生作答": fu_answer,
-                                    "判定状态": fu_ai_result.get("status"),
-                                    "错误类型": fu_ai_result.get("error_type"),
-                                    "AI 详细反馈": fu_ai_result.get("feedback")
+                                # 写入数据库时，直接从全局状态机中提取身份信息
+                                new_record = {
+                                    "学号": st.session_state.current_student_id,
+                                    "学生姓名": st.session_state.current_student_name,
+                                    "题目": selected_q_id,
+                                    "学生作答": student_answer,
+                                    "判定状态": ai_result_dict.get("status"),
+                                    "错误类型": ai_result_dict.get("error_type"),
+                                    "AI 详细反馈": ai_result_dict.get("feedback")
                                 }
-                                save_record(fu_record)
-                                
-                                st.session_state.fu_result_dict = fu_ai_result
-                                st.session_state.fu_completed = True
-                                st.rerun()
+                                save_record(new_record)
+
+                                if current_q_type == "fill" and ai_result_dict.get("status") == "wrong":
+                                    st.session_state.follow_up_active = True
+                                    st.session_state.wrong_feedback = ai_result_dict.get("feedback")
+                                    st.session_state.follow_up_q = ai_result_dict.get("follow_up_q", f"请再次默写这句诗：{current_standard_answer}")
+                                    st.session_state.orig_ans = student_answer  
+                                    st.rerun()  
+                                else:
+                                    st.success(f"批改完成！成绩已成功上传至教师端。")
+                                    st.write("✨ **AI 老师给你的专属反馈：**", ai_result_dict.get("feedback"))
+                                    if current_q_type == "essay":
+                                        st.info(f"📖 **标准答案参考：**\n\n{current_standard_answer}")
                             except Exception as e:
                                 st.error(f"网络异常：{e}")
-            else:
-                st.text_input("📝 你在巩固题中的作答：", value=st.session_state.fu_submitted_ans, disabled=True)
-                
-                res = st.session_state.fu_result_dict
-                if res.get("status") == "correct":
-                    st.success("🎉 太棒了！巩固题回答完全正确，看来你已经掌握了！")
-                elif res.get("status") == "typo":
-                    st.warning("👀 哎呀，还是有点小瑕疵（写了错别字），下次一定要注意细节哦。")
-                else:
-                    st.error("❌ 还是不对哦，请仔细查看老师的最终解析，课后记得多加复习。")
-                
-                st.write("✨ **AI 老师对巩固题的点评：**", res.get("feedback"))
-                
-                if st.button("🔙 结束本次巩固，返回原题模式", type="primary"):
-                    st.session_state.follow_up_active = False
-                    st.session_state.fu_completed = False
-                    st.session_state.fu_result_dict = {}
-                    st.session_state.fu_submitted_ans = ""  
-                    st.session_state.orig_ans = ""
-                    st.rerun()
 
-    # ---------------------------------------------------------
-    # 标签页二：新增的自由问答探讨功能
-    # ---------------------------------------------------------
-    with tab_chat:
-        st.markdown("### 💡 导师答疑室")
-        st.caption("在这里，你可以向 AI 导师请教关于这首诗的任何疑惑。")
-        
-        # 1. 遍历并渲染历史聊天记录
-        for msg in st.session_state.chat_history:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+            # 错题巩固模式（同样剔除了姓名和学号的展示）
+            else:
+                st.markdown(f"### 📌 原题内容：")
+                st.success(current_q_text)
+                st.text_input("📝 你在原题中的作答：", value=st.session_state.orig_ans, disabled=True)
                 
-        # 2. 接收用户输入的 Chat Input 框
-        if user_input := st.chat_input("向 AI 导师提问，例如：大漠孤烟直到底是一幅怎样的画面？"):
-            # 将用户的提问存入记忆并直接展示
-            st.session_state.chat_history.append({"role": "user", "content": user_input})
-            with st.chat_message("user"):
-                st.markdown(user_input)
+                st.error("❌ 哎呀，你刚才的作答有误，系统已为你开启【错题巩固模式】！")
+                st.write("✨ **首次作答诊断：**", st.session_state.wrong_feedback)
                 
-            # 3. 呼叫大模型，并开启流式输出 (Streaming)
-            with st.chat_message("assistant"):
-                message_placeholder = st.empty()
-                
-                # 构建发送给大模型的完整上下文：话题锁 Prompt + 聊天历史
-                messages_for_llm = [{"role": "system", "content": prompt_chat_system}] + st.session_state.chat_history
-                
-                try:
-                    # 注意此处开启了 stream=True 打字机效果
-                    response = client.chat.completions.create(
-                        model="deepseek-chat",
-                        messages=messages_for_llm,
-                        temperature=0.7,
-                        stream=True
-                    )
+                st.divider()
+                st.markdown(f"### 🎯 巩固题靶向训练：")
+                st.info(st.session_state.follow_up_q)
+
+                if not st.session_state.fu_completed:
+                    with st.form(key="follow_up_form"):
+                        fu_answer = st.text_input("请输入巩固题的答案：")
+                        fu_submitted = st.form_submit_button("🚀 提交巩固作答")
+
+                    if fu_submitted:
+                        if fu_answer.strip() == "":
+                            st.warning("巩固题答案不能为空！")
+                        else:
+                            st.session_state.fu_submitted_ans = fu_answer
+                            final_prompt = prompt_follow_up.format(q=st.session_state.follow_up_q, a=current_standard_answer, s=fu_answer)
+                            
+                            with st.spinner("AI 老师正在认真审阅你的巩固答案..."):
+                                try:
+                                    response = client.chat.completions.create(
+                                        model="deepseek-chat", 
+                                        messages=[{"role": "user", "content": final_prompt}],
+                                        response_format={"type": "json_object"}, 
+                                        temperature=0.1 
+                                    )
+                                    fu_ai_result = json.loads(response.choices[0].message.content)
+                                    
+                                    # 依然从全局状态机中取学号和姓名
+                                    fu_record = {
+                                        "学号": st.session_state.current_student_id,
+                                        "学生姓名": st.session_state.current_student_name,
+                                        "题目": selected_q_id + " (二次巩固)",
+                                        "学生作答": fu_answer,
+                                        "判定状态": fu_ai_result.get("status"),
+                                        "错误类型": fu_ai_result.get("error_type"),
+                                        "AI 详细反馈": fu_ai_result.get("feedback")
+                                    }
+                                    save_record(fu_record)
+                                    
+                                    st.session_state.fu_result_dict = fu_ai_result
+                                    st.session_state.fu_completed = True
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"网络异常：{e}")
+                else:
+                    st.text_input("📝 你在巩固题中的作答：", value=st.session_state.fu_submitted_ans, disabled=True)
                     
-                    full_response = ""
-                    for chunk in response:
-                        if chunk.choices[0].delta.content is not None:
-                            full_response += chunk.choices[0].delta.content
-                            # 加上光标闪烁效果，增强互动感
-                            message_placeholder.markdown(full_response + "▌")
-                    # 循环结束后去掉光标
-                    message_placeholder.markdown(full_response)
+                    res = st.session_state.fu_result_dict
+                    if res.get("status") == "correct":
+                        st.success("🎉 太棒了！巩固题回答完全正确，看来你已经掌握了！")
+                    elif res.get("status") == "typo":
+                        st.warning("👀 哎呀，还是有点小瑕疵（写了错别字），下次一定要注意细节哦。")
+                    else:
+                        st.error("❌ 还是不对哦，请仔细查看老师的最终解析，课后记得多加复习。")
                     
-                    # 将 AI 的回复存入 Session State `['seʃn steɪt]` 记忆
-                    st.session_state.chat_history.append({"role": "assistant", "content": full_response})
-                except Exception as e:
-                    st.error(f"网络异常：{e}")
+                    st.write("✨ **AI 老师对巩固题的点评：**", res.get("feedback"))
+                    
+                    if st.button("🔙 结束本次巩固，返回原题模式", type="primary"):
+                        st.session_state.follow_up_active = False
+                        st.session_state.fu_completed = False
+                        st.session_state.fu_result_dict = {}
+                        st.session_state.fu_submitted_ans = ""  
+                        st.session_state.orig_ans = ""
+                        st.rerun()
+
+        # ================= 标签页二：自由问答探讨 =================
+        with tab_chat:
+            st.markdown("### 💡 导师答疑室")
+            st.caption("在这里，你可以向 AI 导师请教关于这首诗的任何疑惑。")
+            
+            chat_container = st.container(height=450)
+            
+            with chat_container:
+                for msg in st.session_state.chat_history:
+                    with st.chat_message(msg["role"]):
+                        st.markdown(msg["content"])
+                    
+            if user_input := st.chat_input("向 AI 导师提问，例如：大漠孤烟直到底是一幅怎样的画面？"):
+                st.session_state.chat_history.append({"role": "user", "content": user_input})
+                
+                with chat_container:
+                    with st.chat_message("user"):
+                        st.markdown(user_input)
+                        
+                    with st.chat_message("assistant"):
+                        message_placeholder = st.empty()
+                        
+                        messages_for_llm = [{"role": "system", "content": prompt_chat_system}] + st.session_state.chat_history
+                        
+                        try:
+                            response = client.chat.completions.create(
+                                model="deepseek-chat",
+                                messages=messages_for_llm,
+                                temperature=0.7,
+                                stream=True
+                            )
+                            
+                            full_response = ""
+                            for chunk in response:
+                                if chunk.choices[0].delta.content is not None:
+                                    full_response += chunk.choices[0].delta.content
+                                    message_placeholder.markdown(full_response + "▌")
+                            message_placeholder.markdown(full_response)
+                            
+                            st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+                        except Exception as e:
+                            st.error(f"网络异常：{e}")
 
 # ==========================================
-# 原封不动的教师端逻辑
+# 教师端逻辑（保持不变）
 # ==========================================
 elif role == "👩‍🏫 教师端":
     st.title("📊 班级学情汇总大屏 (教师端)")
